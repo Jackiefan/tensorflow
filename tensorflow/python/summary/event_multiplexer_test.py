@@ -32,7 +32,8 @@ def _AddEvents(path):
   if not gfile.IsDirectory(path):
     gfile.MakeDirs(path)
   fpath = os.path.join(path, 'hypothetical.tfevents.out')
-  with gfile.GFile(fpath, 'w'):
+  with gfile.GFile(fpath, 'w') as f:
+    f.write('')
     return fpath
 
 
@@ -47,6 +48,7 @@ class _FakeAccumulator(object):
   def __init__(self, path):
     self._path = path
     self.reload_called = False
+    self._node_names_to_health_pills = {'Add': ['hp1', 'hp2']}
 
   def Tags(self):
     return {event_accumulator.IMAGES: ['im1', 'im2'],
@@ -62,6 +64,12 @@ class _FakeAccumulator(object):
     if tag_name not in self.Tags()[event_accumulator.SCALARS]:
       raise KeyError
     return ['%s/%s' % (self._path, tag_name)]
+
+  def HealthPills(self, node_name):
+    if node_name not in self._node_names_to_health_pills:
+      raise KeyError
+    health_pills = self._node_names_to_health_pills[node_name]
+    return [self._path + '/' + health_pill for health_pill in health_pills]
 
   def Histograms(self, tag_name):
     if tag_name not in self.Tags()[event_accumulator.HISTOGRAMS]:
@@ -133,6 +141,10 @@ class EventMultiplexerTest(test_util.TensorFlowTestCase):
     run1_expected = ['path1/sv1']
 
     self.assertEqual(run1_expected, run1_actual)
+
+  def testHealthPills(self):
+    x = event_multiplexer.EventMultiplexer({'run1': 'path1', 'run2': 'path2'})
+    self.assertEqual(['path1/hp1', 'path1/hp2'], x.HealthPills('run1', 'Add'))
 
   def testExceptions(self):
     x = event_multiplexer.EventMultiplexer({'run1': 'path1', 'run2': 'path2'})
@@ -282,7 +294,7 @@ class EventMultiplexerTest(test_util.TensorFlowTestCase):
 
 class EventMultiplexerWithRealAccumulatorTest(test_util.TensorFlowTestCase):
 
-  def testDeletingDirectoryDoesntThrowException(self):
+  def testDeletingDirectoryRemovesRun(self):
     x = event_multiplexer.EventMultiplexer()
     tmpdir = self.get_temp_dir()
     join = os.path.join
@@ -301,8 +313,8 @@ class EventMultiplexerWithRealAccumulatorTest(test_util.TensorFlowTestCase):
 
     # Delete the directory, then reload.
     shutil.rmtree(run2_dir)
-
     x.Reload()
+    self.assertNotIn('run2', x.Runs().keys())
 
 
 if __name__ == '__main__':

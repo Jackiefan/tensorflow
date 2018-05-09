@@ -45,7 +45,7 @@ class MultivariateNormalFullCovariance(mvn_tril.MultivariateNormalTriL):
   The probability density function (pdf) is, with `@` as matrix multiplication,
 
   ```none
-  pdf(x; loc, covariance_matrix) = exp(-0.5 ||y||**2) / Z,
+  pdf(x; loc, covariance_matrix) = exp(-0.5 y) / Z,
   y = (x - loc)^T @ inv(covariance_matrix) @ (x - loc)
   Z = (2 pi)**(0.5 k) |det(covariance_matrix)|**(0.5).
   ```
@@ -54,8 +54,7 @@ class MultivariateNormalFullCovariance(mvn_tril.MultivariateNormalTriL):
 
   * `loc` is a vector in `R^k`,
   * `covariance_matrix` is an `R^{k x k}` symmetric positive definite matrix,
-  * `Z` denotes the normalization constant, and,
-  * `||y||**2` denotes the squared Euclidean norm of `y`.
+  * `Z` denotes the normalization constant.
 
   Additional leading dimensions (if any) in `loc` and `covariance_matrix` allow
   for batch dimensions.
@@ -159,7 +158,7 @@ class MultivariateNormalFullCovariance(mvn_tril.MultivariateNormalTriL):
     parameters = locals()
 
     # Convert the covariance_matrix up to a scale_tril and call MVNTriL.
-    with ops.name_scope(name):
+    with ops.name_scope(name) as name:
       with ops.name_scope("init", values=[loc, covariance_matrix]):
         if covariance_matrix is None:
           scale_tril = None
@@ -167,12 +166,11 @@ class MultivariateNormalFullCovariance(mvn_tril.MultivariateNormalTriL):
           covariance_matrix = ops.convert_to_tensor(
               covariance_matrix, name="covariance_matrix")
           if validate_args:
-            assert_symmetric = check_ops.assert_equal(
-                covariance_matrix,
-                array_ops.matrix_transpose(covariance_matrix),
-                message="Matrix was not symmetric.")
-            covariance_matrix = control_flow_ops.with_dependencies(
-                [assert_symmetric], covariance_matrix)
+            covariance_matrix = control_flow_ops.with_dependencies([
+                check_ops.assert_near(
+                    covariance_matrix,
+                    array_ops.matrix_transpose(covariance_matrix),
+                    message="Matrix was not symmetric")], covariance_matrix)
           # No need to validate that covariance_matrix is non-singular.
           # LinearOperatorLowerTriangular has an assert_non_singular method that
           # is called by the Bijector.

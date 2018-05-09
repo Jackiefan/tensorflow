@@ -241,6 +241,7 @@ class ScatterNdUpdateOp : public OpKernel {
 TF_CALL_NUMBER_TYPES(REGISTER_SCATTER_ND_ADD_SUB_CPU);
 TF_CALL_NUMBER_TYPES(REGISTER_SCATTER_ND_UPDATE_CPU);
 TF_CALL_NUMBER_TYPES(REGISTER_SCATTER_ND_CPU);
+TF_CALL_string(REGISTER_SCATTER_ND_CPU);
 
 // Registers GPU kernels.
 #if GOOGLE_CUDA
@@ -487,6 +488,8 @@ Status DoScatterNd(OpKernelContext* c, const Tensor& indices,
       PARAMS_CASE(3);
       PARAMS_CASE(4);
       PARAMS_CASE(5);
+      PARAMS_CASE(6);
+      PARAMS_CASE(7);
 #undef PARAMS_CASE
       default:
         return errors::InvalidArgument(
@@ -525,7 +528,9 @@ namespace functor {
   DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 2); \
   DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 3); \
   DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 4); \
-  DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 5);
+  DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 5); \
+  DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 6); \
+  DECLARE_GPU_SPECS_INDEX_OP_IXDIM(T, Index, op, 7);
 
 #define DECLARE_GPU_SPECS_INDEX(T, Index)                                \
   DECLARE_GPU_SPECS_INDEX_OP(T, Index, scatter_nd_op::UpdateOp::ASSIGN); \

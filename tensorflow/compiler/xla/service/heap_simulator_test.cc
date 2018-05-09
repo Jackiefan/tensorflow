@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "tensorflow/compiler/xla/literal_util.h"
+#include "tensorflow/compiler/xla/service/buffer_value.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
@@ -76,7 +77,8 @@ class HeapSimulatorTracker {
   HeapSimulatorTracker(
       const string& name, std::unique_ptr<HloComputation> computation,
       const std::vector<const HloInstruction*>& instruction_sequence) {
-    module_ = MakeUnique<HloModule>(name);
+    HloModuleConfig config;
+    module_ = MakeUnique<HloModule>(name, config);
     module_->AddEntryComputation(std::move(computation));
     points_to_analysis_ =
         TuplePointsToAnalysis::Run(module_.get()).ConsumeValueOrDie();
@@ -84,7 +86,7 @@ class HeapSimulatorTracker {
     // size of the buffers doesn't matter, so we always return 0.  We rely on
     // the secondary sorting criteria of DecreasingSizeRunsHeap to sort calls by
     // buffer id, for determinism in the tests.
-    auto zero_size = [](const LogicalBuffer& buffer) { return 0; };
+    auto zero_size = [](const BufferValue& buffer) { return 0; };
     auto algorithm = MakeUnique<DecreasingSizeRunsHeap>(
         MakeUnique<HeapCallRecorder>(&actual_calls_));
     result_ = HeapSimulator::Run(
@@ -94,7 +96,8 @@ class HeapSimulatorTracker {
   }
 
   explicit HeapSimulatorTracker(const string& name) {
-    module_ = MakeUnique<HloModule>(name);
+    HloModuleConfig config;
+    module_ = MakeUnique<HloModule>(name, config);
   }
 
   // Similar to the single entry computation constructor above, but runs the
@@ -117,7 +120,7 @@ class HeapSimulatorTracker {
     // the sequence. This lets us ensure the Alloc calls are in the sequence
     // order. The Free calls are sorted by LogicalBuffer.id, which is at least
     // deterministic.
-    auto size_fn = [&reverse_position](const LogicalBuffer& buffer) {
+    auto size_fn = [&reverse_position](const BufferValue& buffer) {
       return reverse_position[buffer.instruction()];
     };
     auto algorithm = MakeUnique<DecreasingSizeRunsHeap>(
@@ -406,6 +409,56 @@ TEST_F(HeapSimulatorTest, MultiplyDotDotTuple) {
       {kFree, tracker.BufferAt(dot0, {})},
       {kFree, tracker.BufferAt(dot1, {})},
       {kFree, tracker.BufferAt(tuple, {})},
+      {kFinish, nullptr},
+  });
+}
+
+TEST_F(HeapSimulatorTest, IndependentTupleElements) {
+  auto builder = HloComputation::Builder(TestName());
+  auto paramA = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, f32scalar_, "paramA"));
+  auto paramB = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, f32scalar_, "paramB"));
+  auto mul = builder.AddInstruction(HloInstruction::CreateBinary(
+      f32scalar_, HloOpcode::kMultiply, paramA, paramB));
+  auto add = builder.AddInstruction(HloInstruction::CreateBinary(
+      f32scalar_, HloOpcode::kAdd, paramA, paramB));
+  auto tuple = builder.AddInstruction(HloInstruction::CreateTuple({mul, add}));
+  auto element0 = builder.AddInstruction(
+      HloInstruction::CreateGetTupleElement(f32scalar_, tuple, 0));
+  auto broadcast = builder.AddInstruction(
+      HloInstruction::CreateBroadcast(f32vec4_, element0, {0}));
+  auto sub = builder.AddInstruction(HloInstruction::CreateBinary(
+      f32scalar_, HloOpcode::kSubtract, paramA, paramB));
+  auto element1 = builder.AddInstruction(
+      HloInstruction::CreateGetTupleElement(f32scalar_, tuple, 1));
+  auto output = builder.AddInstruction(
+      HloInstruction::CreateTuple({broadcast, sub, element1}));
+
+  HeapSimulatorTracker tracker(TestName(), builder.Build(),
+                               {paramA, paramB, mul, add, tuple, element0,
+                                broadcast, sub, element1, output});
+  tracker.ExpectCallSequence({
+      {kAlloc, tracker.BufferAt(paramA, {})},
+      {kAlloc, tracker.BufferAt(paramB, {})},
+      {kAlloc, tracker.BufferAt(mul, {})},
+      {kAlloc, tracker.BufferAt(add, {})},
+      {kAlloc, tracker.BufferAt(tuple, {})},
+      {kAlloc, tracker.BufferAt(broadcast, {})},
+      // The mul can be freed right after the broadcast happens, even though
+      // The other GetTupleElement is still alive.
+      {kFree, tracker.BufferAt(mul, {})},
+      {kAlloc, tracker.BufferAt(sub, {})},
+      // The temporary tuple is now dead.
+      {kFree, tracker.BufferAt(tuple, {})},
+      {kAlloc, tracker.BufferAt(output, {})},
+      // All params and outputs are freed at the end.
+      {kFree, tracker.BufferAt(paramA, {})},
+      {kFree, tracker.BufferAt(paramB, {})},
+      {kFree, tracker.BufferAt(add, {})},
+      {kFree, tracker.BufferAt(broadcast, {})},
+      {kFree, tracker.BufferAt(sub, {})},
+      {kFree, tracker.BufferAt(output, {})},
       {kFinish, nullptr},
   });
 }
